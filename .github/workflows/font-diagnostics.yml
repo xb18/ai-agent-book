@@ -11,36 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: System font state
-        run: |
-          sw_vers
-          echo "--- /System/Library/Fonts PingFang ---"
-          ls -la /System/Library/Fonts/ | grep -i pingfang || echo "no PingFang in /System/Library/Fonts"
-          echo "--- Supplemental ---"
-          ls /System/Library/Fonts/Supplemental/ | grep -i "pingfang\|songti\|hiragino" || true
-          echo "--- AssetsV2 font assets ---"
-          ls /System/Library/AssetsV2/com_apple_MobileAsset_Font7/ 2>/dev/null | head -20 || echo "no AssetsV2 Font7 dir"
-          find /System/Library/AssetsV2/com_apple_MobileAsset_Font7 -name "*.ttc" 2>/dev/null | head -10 || true
+      - name: Install PingFang from Apple asset catalog
+        run: bash .github/scripts/install_apple_fonts.sh
 
-      - name: CoreText resolution detail
-        run: |
-          cat > /tmp/ctdiag.swift <<'EOF'
-          import CoreText
-          import Foundation
-          for family in ["PingFang SC", "Hiragino Sans", "Songti SC"] {
-              let attrs = [kCTFontFamilyNameAttribute: family] as CFDictionary
-              let desc = CTFontDescriptorCreateWithAttributes(attrs)
-              let font = CTFontCreateWithFontDescriptor(desc, 12, nil)
-              let resolved = CTFontCopyFamilyName(font) as String
-              let ps = CTFontCopyPostScriptName(font) as String
-              let url = (CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL)?.path ?? "NO URL"
-              let exists = FileManager.default.fileExists(atPath: url) ? "exists" : "MISSING"
-              print("\(family) -> \(resolved) / \(ps)\n   \(url) [\(exists)]")
-          }
-          EOF
-          swift /tmp/ctdiag.swift
-
-      - name: Install librsvg and render test SVG
+      - name: Render test SVG and verify embedded font
         run: |
           brew install librsvg poppler
           cat > /tmp/fonttest.svg <<'EOF'
@@ -50,13 +24,6 @@ jobs:
           </svg>
           EOF
           rsvg-convert -f pdf -o /tmp/fonttest.pdf /tmp/fonttest.svg
-          echo "--- default backend ---"
           pdffonts /tmp/fonttest.pdf
-
-      - name: Try on-demand download then re-render
-        run: |
-          swift .github/scripts/download_apple_fonts.swift "PingFang SC" "PingFang TC" || true
-          echo "--- re-run CoreText detail ---"
-          swift /tmp/ctdiag.swift
-          rsvg-convert -f pdf -o /tmp/fonttest2.pdf /tmp/fonttest.svg
-          pdffonts /tmp/fonttest2.pdf
+          pdffonts /tmp/fonttest.pdf | grep -q "PingFangSC" || { echo "ERROR: PingFang not embedded"; exit 1; }
+          echo "SUCCESS: rsvg-convert embeds PingFang SC"
