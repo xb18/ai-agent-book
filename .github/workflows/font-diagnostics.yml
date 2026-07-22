@@ -14,16 +14,51 @@ jobs:
       - name: Install PingFang from Apple asset catalog
         run: bash .github/scripts/install_apple_fonts.sh
 
-      - name: Render test SVG and verify embedded font
+      - name: Install librsvg
         run: |
           brew install librsvg poppler
+          rsvg-convert --version
+          brew list --versions pango cairo fontconfig harfbuzz
+
+      - name: Fontconfig view of PingFang
+        run: |
+          fc-cache -f 2>/dev/null || true
+          echo "--- fc-match 'PingFang SC' ---"
+          fc-match "PingFang SC" || true
+          echo "--- fc-list pingfang ---"
+          fc-list | grep -i pingfang || echo "fontconfig does not see PingFang"
+          echo "--- font dirs ---"
+          fc-conflist 2>/dev/null | head -5 || true
+          python3 - <<'EOF'
+          import subprocess
+          out = subprocess.run(['fc-conflist'], capture_output=True, text=True).stdout
+          print(out[:500])
+          EOF
+
+      - name: Render with each pango backend
+        run: |
           cat > /tmp/fonttest.svg <<'EOF'
           <svg xmlns="http://www.w3.org/2000/svg" width="400" height="120">
             <text x="10" y="40" font-family="Arial, 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20">思考推理 Reasoning</text>
             <text x="10" y="80" font-family="'PingFang SC'" font-size="20">静态前缀思考</text>
           </svg>
           EOF
-          rsvg-convert -f pdf -o /tmp/fonttest.pdf /tmp/fonttest.svg
-          pdffonts /tmp/fonttest.pdf
-          pdffonts /tmp/fonttest.pdf | grep -q "PingFangSC" || { echo "ERROR: PingFang not embedded"; exit 1; }
-          echo "SUCCESS: rsvg-convert embeds PingFang SC"
+          for backend in default coretext fontconfig fc; do
+            if [ "$backend" = default ]; then unset PANGOCAIRO_BACKEND; else export PANGOCAIRO_BACKEND=$backend; fi
+            echo "=== backend: $backend ==="
+            rsvg-convert -f pdf -o /tmp/ft-$backend.pdf /tmp/fonttest.svg 2>&1 || continue
+            pdffonts /tmp/ft-$backend.pdf
+            python3 - /tmp/ft-$backend.pdf <<'EOF'
+          import re, sys, zlib
+          data = open(sys.argv[1], 'rb').read()
+          names = set()
+          for m in re.finditer(rb'stream\r?\n', data):
+              s = m.end(); e = data.find(b'endstream', s)
+              if e < 0: continue
+              try: d = zlib.decompress(data[s:e])
+              except zlib.error: continue
+              for n in (b'PingFang', b'Hiragino', b'Arial', b'Helvetica', b'STHeiti', b'Songti'):
+                  if n in d: names.add(n.decode())
+          print('embedded name strings:', sorted(names))
+          EOF
+          done
