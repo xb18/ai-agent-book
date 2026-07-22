@@ -1,0 +1,60 @@
+name: Font diagnostics (temporary)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: System font state
+        run: |
+          sw_vers
+          echo "--- /System/Library/Fonts PingFang ---"
+          ls -la /System/Library/Fonts/ | grep -i pingfang || echo "no PingFang in /System/Library/Fonts"
+          echo "--- Supplemental ---"
+          ls /System/Library/Fonts/Supplemental/ | grep -i "pingfang\|songti\|hiragino" || true
+          echo "--- AssetsV2 font assets ---"
+          ls /System/Library/AssetsV2/com_apple_MobileAsset_Font7/ 2>/dev/null | head -20 || echo "no AssetsV2 Font7 dir"
+          find /System/Library/AssetsV2/com_apple_MobileAsset_Font7 -name "*.ttc" 2>/dev/null | head -10 || true
+
+      - name: CoreText resolution detail
+        run: |
+          cat > /tmp/ctdiag.swift <<'EOF'
+          import CoreText
+          import Foundation
+          for family in ["PingFang SC", "Hiragino Sans", "Songti SC"] {
+              let attrs = [kCTFontFamilyNameAttribute: family] as CFDictionary
+              let desc = CTFontDescriptorCreateWithAttributes(attrs)
+              let font = CTFontCreateWithFontDescriptor(desc, 12, nil)
+              let resolved = CTFontCopyFamilyName(font) as String
+              let ps = CTFontCopyPostScriptName(font) as String
+              let url = (CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL)?.path ?? "NO URL"
+              let exists = FileManager.default.fileExists(atPath: url) ? "exists" : "MISSING"
+              print("\(family) -> \(resolved) / \(ps)\n   \(url) [\(exists)]")
+          }
+          EOF
+          swift /tmp/ctdiag.swift
+
+      - name: Install librsvg and render test SVG
+        run: |
+          brew install librsvg poppler
+          cat > /tmp/fonttest.svg <<'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" width="400" height="120">
+            <text x="10" y="40" font-family="Arial, 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20">思考推理 Reasoning</text>
+            <text x="10" y="80" font-family="'PingFang SC'" font-size="20">静态前缀思考</text>
+          </svg>
+          EOF
+          rsvg-convert -f pdf -o /tmp/fonttest.pdf /tmp/fonttest.svg
+          echo "--- default backend ---"
+          pdffonts /tmp/fonttest.pdf
+
+      - name: Try on-demand download then re-render
+        run: |
+          swift .github/scripts/download_apple_fonts.swift "PingFang SC" "PingFang TC" || true
+          echo "--- re-run CoreText detail ---"
+          swift /tmp/ctdiag.swift
+          rsvg-convert -f pdf -o /tmp/fonttest2.pdf /tmp/fonttest.svg
+          pdffonts /tmp/fonttest2.pdf
