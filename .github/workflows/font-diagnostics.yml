@@ -2,6 +2,8 @@ name: Font diagnostics (temporary)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ci-font-diagnostics]
 
 jobs:
   diag:
